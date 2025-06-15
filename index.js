@@ -5,9 +5,10 @@ const ffmpeg = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
+require('dotenv').config();
+
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
 const LOG_CHANNEL_NAME = 'logs';
 
 const DEFAULT_TOLERANCE = 20;
@@ -206,6 +207,20 @@ client.on(Events.InteractionCreate, async interaction => {
 - Seuil de kick : ${typeof threshold === 'number' ? threshold.toFixed(1) : 'Indéfini'} dB
 - Tolérance personnalisée : ${adjustment} dB`);
   }
+
+  if (commandName === 'fin') {
+    const guildVoice = interaction.guild.members.me.voice;
+    if (!guildVoice || !guildVoice.channel) {
+      return interaction.reply({ content: '❌ Je ne suis dans aucun salon vocal.', ephemeral: true });
+    }
+    try {
+      guildVoice.disconnect();
+      await interaction.reply('👋 Je quitte le vocal !');
+      isMonitoring = false;
+    } catch (err) {
+      await interaction.reply({ content: '❌ Impossible de quitter le vocal.', ephemeral: true });
+    }
+  }
 });
 
 async function sendLog(guild, message) {
@@ -222,14 +237,15 @@ const commands = [
     .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur ciblé').setRequired(true))
     .addIntegerOption(opt => opt.setName('valeur').setDescription('Décibels à ajouter/enlever').setRequired(true)),
   new SlashCommandBuilder().setName('info').setDescription('Affiche les infos de seuil pour un utilisateur')
-    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur').setRequired(true))
+    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur').setRequired(true)),
+  new SlashCommandBuilder().setName('fin').setDescription('Déconnecte le bot du vocal')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 (async () => {
   try {
     console.log('📥 Enregistrement des commandes slash...');
-    await rest.put(Routes.applicationCommands(CLIENT_ID),{ body: commands });
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
 
     console.log('✅ Commandes enregistrées.');
   } catch (error) {
