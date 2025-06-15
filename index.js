@@ -51,7 +51,6 @@ function getGlobalAverageMax() {
   return allVolumes.reduce((a, b) => a + b, 0) / allVolumes.length;
 }
 
-// Nouvelle fonction centralisée pour calculer le seuil de kick
 function getKickThreshold(userId) {
   const profile = userProfiles[userId];
   const adjustment = profile ? profile.adjustment : 0;
@@ -70,6 +69,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!member.voice || !member.voice.channel) {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
+    await interaction.deferReply({ ephemeral: true });
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -77,7 +77,7 @@ client.on(Events.InteractionCreate, async interaction => {
       adapterCreator: channel.guild.voiceAdapterCreator
     });
 
-    await interaction.reply('🔍 Analyse des utilisateurs en cours pendant 60 secondes...');
+    interaction.editReply('🔍 Analyse des utilisateurs en cours pendant 60 secondes...');
 
     connection.receiver.speaking.on('start', (userId) => {
       const user = channel.members.get(userId);
@@ -115,9 +115,9 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     });
 
-    setTimeout(() => {
+    setTimeout(async () => {
       connection.destroy();
-      interaction.followUp('✅ Fin de l\'analyse. Les données ont été enregistrées.');
+      await interaction.followUp('✅ Fin de l\'analyse. Les données ont été enregistrées.');
     }, ANALYSE_DURATION);
   }
 
@@ -125,6 +125,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!member.voice || !member.voice.channel) {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
+    await interaction.deferReply({ ephemeral: true });
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -133,7 +134,7 @@ client.on(Events.InteractionCreate, async interaction => {
     });
 
     isMonitoring = true;
-    await interaction.reply('👂 Surveillance active. Les utilisateurs seront déconnectés s\'ils dépassent leur seuil.');
+    await interaction.editReply('👂 Surveillance active. Les utilisateurs seront déconnectés s\'ils dépassent leur seuil.');
 
     connection.receiver.speaking.on('start', (userId) => {
       const user = channel.members.get(userId);
@@ -162,7 +163,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const maxVol = parseFloat(maxMatch[1]);
         const threshold = getKickThreshold(user.id);
-        if (threshold === null) return; // Pas assez de données pour calculer le seuil
+        if (threshold === null) return;
         const diff = (maxVol - threshold).toFixed(1);
 
         console.log(`🎙️ ${user.user.username} - Volume détecté: ${maxVol.toFixed(1)} dB | Seuil: ${threshold.toFixed(1)} dB | Diff: ${diff} dB`);
