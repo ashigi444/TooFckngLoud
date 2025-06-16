@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { joinVoiceChannel, EndBehaviorType } = require('@discordjs/voice');
 const prism = require('prism-media');
 const ffmpeg = require('ffmpeg-static');
@@ -8,7 +8,6 @@ const fs = require('fs');
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
 const LOG_CHANNEL_NAME = 'logs';
 
 const DEFAULT_TOLERANCE = 20;
@@ -45,6 +44,7 @@ function getGlobalAverageMax() {
   const allVolumes = Object.values(userProfiles)
     .filter(p => p.history.length >= MIN_OBSERVATIONS)
     .flatMap(p => p.history);
+
   if (allVolumes.length === 0) return null;
   return allVolumes.reduce((a, b) => a + b, 0) / allVolumes.length;
 }
@@ -67,7 +67,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!member.voice || !member.voice.channel) {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
-    await interaction.deferReply({ ephemeral: true }); // Toujours au début
+    await interaction.deferReply({ ephemeral: true });
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -115,9 +115,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
     setTimeout(async () => {
       connection.destroy();
-      await interaction.followUp({ content: '✅ Fin de l\'analyse. Les données ont été enregistrées.', ephemeral: true });
+      await interaction.followUp('✅ Fin de l\'analyse. Les données ont été enregistrées.');
     }, ANALYSE_DURATION);
-    return;
   }
 
   if (commandName === 'join') {
@@ -179,7 +178,6 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       });
     });
-    return;
   }
 
   if (commandName === 'adjust') {
@@ -191,7 +189,7 @@ client.on(Events.InteractionCreate, async interaction => {
     userProfiles[target.id].adjustment += valeur;
     saveProfiles();
 
-    return interaction.reply({ content: `🔧 Ajustement appliqué à ${target.username} : ${valeur} dB (total: ${userProfiles[target.id].adjustment} dB)`, ephemeral: true });
+    return interaction.reply(`🔧 Ajustement appliqué à ${target.username} : ${valeur} dB (total: ${userProfiles[target.id].adjustment} dB)`);
   }
 
   if (commandName === 'info') {
@@ -203,14 +201,10 @@ client.on(Events.InteractionCreate, async interaction => {
     const adjustment = profile ? profile.adjustment : 0;
     const threshold = getKickThreshold(target.id);
 
-    return interaction.reply({
-      content:
-        `📈 ${target.username} :
+    return interaction.reply(`📈 ${target.username} :
 - Moyenne max : ${avg ? avg.toFixed(1) : 'Pas de donnée'} dB
 - Seuil de kick : ${typeof threshold === 'number' ? threshold.toFixed(1) : 'Indéfini'} dB
-- Tolérance personnalisée : ${adjustment} dB`,
-      ephemeral: true
-    });
+- Tolérance personnalisée : ${adjustment} dB`);
   }
 
   if (commandName === 'fin') {
@@ -220,12 +214,11 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     try {
       guildVoice.disconnect();
-      await interaction.reply({ content: '👋 Je quitte le vocal !', ephemeral: true });
+      await interaction.reply('👋 Je quitte le vocal !');
       isMonitoring = false;
     } catch (err) {
       await interaction.reply({ content: '❌ Impossible de quitter le vocal.', ephemeral: true });
     }
-    return;
   }
 });
 
@@ -235,27 +228,5 @@ async function sendLog(guild, message) {
   );
   if (logChannel) logChannel.send(message).catch(console.error);
 }
-
-const commands = [
-  new SlashCommandBuilder().setName('analyse').setDescription('Analyse les utilisateurs du vocal pendant 60 secondes'),
-  new SlashCommandBuilder().setName('join').setDescription('Active la surveillance vocale'),
-  new SlashCommandBuilder().setName('adjust').setDescription('Ajuste la tolérance pour un utilisateur')
-    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur ciblé').setRequired(true))
-    .addIntegerOption(opt => opt.setName('valeur').setDescription('Décibels à ajouter/enlever').setRequired(true)),
-  new SlashCommandBuilder().setName('info').setDescription('Affiche les infos de seuil pour un utilisateur')
-    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur').setRequired(true)),
-  new SlashCommandBuilder().setName('fin').setDescription('Déconnecte le bot du vocal')
-].map(c => c.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-(async () => {
-  try {
-    console.log('📥 Enregistrement des commandes slash...');
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('✅ Commandes enregistrées.');
-  } catch (error) {
-    console.error(error);
-  }
-})();
 
 client.login(TOKEN);
