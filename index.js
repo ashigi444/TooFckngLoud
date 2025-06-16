@@ -45,9 +45,7 @@ function getGlobalAverageMax() {
   const allVolumes = Object.values(userProfiles)
     .filter(p => p.history.length >= MIN_OBSERVATIONS)
     .flatMap(p => p.history);
-
   if (allVolumes.length === 0) return null;
-
   return allVolumes.reduce((a, b) => a + b, 0) / allVolumes.length;
 }
 
@@ -69,7 +67,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!member.voice || !member.voice.channel) {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ephemeral: true }); // Toujours au début
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -77,7 +75,7 @@ client.on(Events.InteractionCreate, async interaction => {
       adapterCreator: channel.guild.voiceAdapterCreator
     });
 
-    interaction.editReply('🔍 Analyse des utilisateurs en cours pendant 60 secondes...');
+    await interaction.editReply('🔍 Analyse des utilisateurs en cours pendant 60 secondes...');
 
     connection.receiver.speaking.on('start', (userId) => {
       const user = channel.members.get(userId);
@@ -117,8 +115,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     setTimeout(async () => {
       connection.destroy();
-      await interaction.followUp('✅ Fin de l\'analyse. Les données ont été enregistrées.');
+      await interaction.followUp({ content: '✅ Fin de l\'analyse. Les données ont été enregistrées.', ephemeral: true });
     }, ANALYSE_DURATION);
+    return;
   }
 
   if (commandName === 'join') {
@@ -180,6 +179,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       });
     });
+    return;
   }
 
   if (commandName === 'adjust') {
@@ -191,7 +191,7 @@ client.on(Events.InteractionCreate, async interaction => {
     userProfiles[target.id].adjustment += valeur;
     saveProfiles();
 
-    return interaction.reply(`🔧 Ajustement appliqué à ${target.username} : ${valeur} dB (total: ${userProfiles[target.id].adjustment} dB)`);
+    return interaction.reply({ content: `🔧 Ajustement appliqué à ${target.username} : ${valeur} dB (total: ${userProfiles[target.id].adjustment} dB)`, ephemeral: true });
   }
 
   if (commandName === 'info') {
@@ -203,10 +203,14 @@ client.on(Events.InteractionCreate, async interaction => {
     const adjustment = profile ? profile.adjustment : 0;
     const threshold = getKickThreshold(target.id);
 
-    return interaction.reply(`📈 ${target.username} :
+    return interaction.reply({
+      content:
+        `📈 ${target.username} :
 - Moyenne max : ${avg ? avg.toFixed(1) : 'Pas de donnée'} dB
 - Seuil de kick : ${typeof threshold === 'number' ? threshold.toFixed(1) : 'Indéfini'} dB
-- Tolérance personnalisée : ${adjustment} dB`);
+- Tolérance personnalisée : ${adjustment} dB`,
+      ephemeral: true
+    });
   }
 
   if (commandName === 'fin') {
@@ -216,11 +220,12 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     try {
       guildVoice.disconnect();
-      await interaction.reply('👋 Je quitte le vocal !');
+      await interaction.reply({ content: '👋 Je quitte le vocal !', ephemeral: true });
       isMonitoring = false;
     } catch (err) {
       await interaction.reply({ content: '❌ Impossible de quitter le vocal.', ephemeral: true });
     }
+    return;
   }
 });
 
@@ -247,7 +252,6 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     console.log('📥 Enregistrement des commandes slash...');
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-
     console.log('✅ Commandes enregistrées.');
   } catch (error) {
     console.error(error);
