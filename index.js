@@ -1,13 +1,13 @@
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Events, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const { joinVoiceChannel, EndBehaviorType } = require('@discordjs/voice');
 const prism = require('prism-media');
 const ffmpeg = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const fs = require('fs');
-
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 const LOG_CHANNEL_NAME = 'logs';
 
 const DEFAULT_TOLERANCE = 20;
@@ -44,7 +44,6 @@ function getGlobalAverageMax() {
   const allVolumes = Object.values(userProfiles)
     .filter(p => p.history.length >= MIN_OBSERVATIONS)
     .flatMap(p => p.history);
-
   if (allVolumes.length === 0) return null;
   return allVolumes.reduce((a, b) => a + b, 0) / allVolumes.length;
 }
@@ -68,6 +67,7 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
     await interaction.deferReply({ ephemeral: true });
+
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -80,16 +80,13 @@ client.on(Events.InteractionCreate, async interaction => {
     connection.receiver.speaking.on('start', (userId) => {
       const user = channel.members.get(userId);
       if (!user || user.user.bot) return;
-
       const opusStream = connection.receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 }
       });
-
       const ffmpegProcess = spawn(ffmpeg, [
         '-f', 's16le', '-ar', '48000', '-ac', '2',
         '-i', 'pipe:0', '-filter:a', 'volumedetect', '-f', 'null', '-'
       ]);
-
       const pcm = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
       opusStream.pipe(pcm).pipe(ffmpegProcess.stdin);
 
@@ -99,23 +96,20 @@ client.on(Events.InteractionCreate, async interaction => {
       ffmpegProcess.on('close', () => {
         const maxMatch = stderr.match(/max_volume: ([-\d.]+) dB/);
         if (!maxMatch) return;
-
         const maxVol = parseFloat(maxMatch[1]);
         const id = user.id;
         if (!userProfiles[id]) userProfiles[id] = { history: [], adjustment: 0 };
         const profile = userProfiles[id];
-
         if (profile.history.length >= MAX_HISTORY) profile.history.shift();
         profile.history.push(maxVol);
         saveProfiles();
-
         console.log(`📊 [ANALYSE] ${user.user.username} - Volume max: ${maxVol.toFixed(1)} dB (enregistré)`);
       });
     });
 
     setTimeout(async () => {
       connection.destroy();
-      await interaction.followUp('✅ Fin de l\'analyse. Les données ont été enregistrées.');
+      await interaction.followUp({ content: '✅ Fin de l\'analyse. Les données ont été enregistrées.', ephemeral: true });
     }, ANALYSE_DURATION);
   }
 
@@ -124,6 +118,7 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
     }
     await interaction.deferReply({ ephemeral: true });
+
     const channel = member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -138,8 +133,6 @@ client.on(Events.InteractionCreate, async interaction => {
       const user = channel.members.get(userId);
       if (!user || user.user.bot || !isMonitoring) return;
 
-      console.log(`🎧 Début de stream pour ${user.user.username}`);
-
       const opusStream = connection.receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 }
       });
@@ -148,7 +141,6 @@ client.on(Events.InteractionCreate, async interaction => {
         '-f', 's16le', '-ar', '48000', '-ac', '2',
         '-i', 'pipe:0', '-filter:a', 'volumedetect', '-f', 'null', '-'
       ]);
-
       const pcm = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
       opusStream.pipe(pcm).pipe(ffmpegProcess.stdin);
 
@@ -158,14 +150,9 @@ client.on(Events.InteractionCreate, async interaction => {
       ffmpegProcess.on('close', async () => {
         const maxMatch = stderr.match(/max_volume: ([-\d.]+) dB/);
         if (!maxMatch) return;
-
         const maxVol = parseFloat(maxMatch[1]);
         const threshold = getKickThreshold(user.id);
         if (threshold === null) return;
-        const diff = (maxVol - threshold).toFixed(1);
-
-        console.log(`🎙️ ${user.user.username} - Volume détecté: ${maxVol.toFixed(1)} dB | Seuil: ${threshold.toFixed(1)} dB | Diff: ${diff} dB`);
-
         if (maxVol > threshold) {
           try {
             await user.voice.disconnect();
@@ -228,5 +215,31 @@ async function sendLog(guild, message) {
   );
   if (logChannel) logChannel.send(message).catch(console.error);
 }
+
+// -------------------------
+// Command Registration (slash commands, à lancer 1x sur chaque maj de commandes)
+// -------------------------
+const commands = [
+  new SlashCommandBuilder().setName('analyse').setDescription('Analyse les utilisateurs du vocal pendant 60 secondes'),
+  new SlashCommandBuilder().setName('join').setDescription('Active la surveillance vocale'),
+  new SlashCommandBuilder().setName('adjust').setDescription('Ajuste la tolérance pour un utilisateur')
+    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur ciblé').setRequired(true))
+    .addIntegerOption(opt => opt.setName('valeur').setDescription('Décibels à ajouter/enlever').setRequired(true)),
+  new SlashCommandBuilder().setName('info').setDescription('Affiche les infos de seuil pour un utilisateur')
+    .addUserOption(opt => opt.setName('utilisateur').setDescription('Utilisateur').setRequired(true)),
+  new SlashCommandBuilder().setName('fin').setDescription('Déconnecte le bot du vocal')
+].map(c => c.toJSON());
+
+// Enregistre UNIQUEMENT pour l'application globale, PAS en guildId (public)
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+(async () => {
+  try {
+    console.log('📥 Enregistrement des commandes slash...');
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('✅ Commandes enregistrées.');
+  } catch (error) {
+    console.error(error);
+  }
+})();
 
 client.login(TOKEN);
